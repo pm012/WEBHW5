@@ -44,8 +44,8 @@ async def main():
 
     try:
         num_days = int(sys.argv[1])
-        if num_days > 10:
-            print("Number of days should not exceed 10.")
+        if (num_days > 10) or (num_days < 1):
+            print("Number of days should not exceed 10 and should be > 0.")
             return
     except ValueError:
         print("Invalid input. Please provide a valid number of days.")
