@@ -1,64 +1,152 @@
-import asyncio
+# Updated main.py for WebSocket chat integration
 import aiohttp
-import pprint
+import asyncio
+import json
+import names
+import websockets
+from aiofile import AIOFile
+from datetime import datetime, timedelta
+from abc import ABC, abstractclassmethod
 
-class ExchangeRateFetcher:
-    def __init__(self):
-        self.base_url = 'https://api.privatbank.ua/p24api/exchange_rates'
+FILENAME = 'exchange_logs.txt'
 
-    async def fetch_exchange_rate(self, session, date):
-        url = f"{self.base_url}?date={date}"
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.json()
-            else:
-                return None
+class FetchLogger():
+    @staticmethod
+    async def log_fetch(fname=FILENAME):
+        async with AIOFile(fname, 'a') as afp:
+            await afp.write(f"Exchange command executed on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-    async def get_exchange_rates(self, dates):
+
+
+
+class AbstractFetcher(ABC):
+    @abstractclassmethod
+    def fetch_exchange_rates_archive(self, days_back, currencies):
+        pass
+
+    @abstractclassmethod
+    def fetch_exchange_rates_current(self):
+        pass
+
+    @abstractclassmethod
+    def extract_rates(self, *args):
+        pass
+
+class ExchangeRateFetcher(AbstractFetcher):
+    async def fetch_exchange_rates_archive(self, days_back, currencies):
         async with aiohttp.ClientSession() as session:
-            tasks = [self.fetch_exchange_rate(session, date) for date in dates]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            return results
+            dates = [(datetime.now() - timedelta(days=i)).strftime('%d.%m.%Y') for i in range(days_back)]
+            results = []
 
-def format_exchange_rate_data(data):
-    formatted_data = []
-    for entry in data:
-        if entry is not None:
-            rates = entry['exchangeRate']
-            formatted_entry = {entry['date']: {'EUR': {}, 'USD': {}}}
-            for rate in rates:
-                if rate['currency'] == 'EUR':
-                    formatted_entry[entry['date']]['EUR']['sale'] = rate.get('saleRate', rate['saleRateNB'])
-                    formatted_entry[entry['date']]['EUR']['purchase'] = rate.get('purchaseRate', rate['purchaseRateNB'])
-                elif rate['currency'] == 'USD':
-                    formatted_entry[entry['date']]['USD']['sale'] = rate.get('saleRate', rate['saleRateNB'])
-                    formatted_entry[entry['date']]['USD']['purchase'] = rate.get('purchaseRate', rate['purchaseRateNB'])
-            formatted_data.append(formatted_entry)
-    return formatted_data
+            for date in dates:
+                url = f'https://api.privatbank.ua/p24api/exchange_rates?json&date={date}'
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        rates = self.extract_rates(data, currencies)
+                        results.append({date: rates})
+                    else:
+                        # Possible network errors handling
+                        results.append({date: "Error fetching data"})
+
+            return results
+        
+    async def fetch_exchange_rates_current(self):
+        async with aiohttp.ClientSession() as session:                       
+            result= ""
+            url = 'https://api.privatbank.ua/p24api/pubinfo?exchange&coursid=5'
+            async with session.get(url) as response:
+                if response.status == 200:
+                    result = await response.json()
+                else:
+                    # Possible network errors handling
+                    result = "Error fetching data"
+
+            return result
+
+    def extract_rates(self, data, currencies):
+        rates = {}
+        for currency in currencies:
+            for item in data['exchangeRate']:
+                if item['currency'] == currency:
+                    rates[currency] = {
+                        'sale': item.get('saleRate', item['saleRateNB']),
+                        'purchase': item.get('purchaseRate', item['purchaseRateNB'])
+                    }
+                    break
+        return rates
+
+class Server:
+    clients = set()
+
+    async def register(self, ws: websockets.WebSocketServerProtocol):
+        ws.name = names.get_full_name()
+        self.clients.add(ws)
+
+    async def unregister(self, ws: websockets.WebSocketServerProtocol):
+        self.clients.remove(ws)
+
+    async def send_to_clients(self, message):
+        if self.clients:
+            tasks = [client.send(message) for client in self.clients]
+            await asyncio.gather(*tasks)
+            # for client in self.clients:
+            #     await client.send(json.dumps(message))
+
+    async def ws_handler(self, ws, path):
+        await self.register(ws)
+        try:
+            await self.distribute(ws)
+        except websockets.exceptions.ConnectionClosedOK:
+            pass
+        finally:
+            await self.unregister(ws)
+
+    async def distribute(self, ws):        
+        cur_list = ['CHF', 'EUR', 'GBP', 'PLZ', 'SEK', 'UAH', 'USD', 'XAU', 'CAD']
+        async for message in ws:
+             
+            if message.startswith('exchange'):
+                await self.send_to_clients(f"{ws.name}: {message}")  
+                params = message.split()
+                
+                if len(params)>=2: #Check if there are enough parts in message
+                    if params[1].isdigit():
+                        unique_cur = set()
+                        valid_cur_params = []
+                        for index, item in enumerate(params[2:], start = 2):
+                            if item in cur_list and item not in unique_cur:
+                                valid_cur_params.append(item)
+                                unique_cur.add(item)
+                            elif item not in cur_list: 
+                                await self.send_to_clients(f"Lst of currencies contains not available currency {item}. It was eliminated")
+                                await self.send_to_clients(f"Should be in the following list: ['CHF', 'EUR', 'GBP', 'PLZ', 'SEK', 'UAH', 'USD', 'XAU', 'CAD']")
+                        parts = params[:2] + valid_cur_params
+                        days_back = int(parts[1])
+                        currencies = parts[2:] if len(parts) > 2 else ['EUR', 'USD']
+                        fetcher = ExchangeRateFetcher()
+                        rates = await fetcher.fetch_exchange_rates_archive(days_back, currencies)
+                        await FetchLogger.log_fetch(FILENAME)
+                        response = json.dumps(rates, indent=2, ensure_ascii=False)
+                        await self.send_to_clients(f"Reply from PrivatBank to {ws.name}:")
+                        await self.send_to_clients(response)
+                    else: 
+                        await self.send_to_clients("Second parameter should be digit or no parameters should be provided after 'exchange' command")
+                else:
+                    fetcher = ExchangeRateFetcher()
+                    rates = await fetcher.fetch_exchange_rates_current()
+                    await FetchLogger.log_fetch(FILENAME)
+                    response = json.dumps(rates, indent=2, ensure_ascii=False)                    
+                    await self.send_to_clients(f"Reply from PrivatBank to {ws.name}:")
+                    await self.send_to_clients(response)
+                    #await self.send_to_clients("Invalid exchange command format.")
+            else:
+                await self.send_to_clients(f"{ws.name}: {message}")
 
 async def main():
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python main.py <number_of_days>")
-        return
+    server = Server()
+    async with websockets.serve(server.ws_handler, 'localhost', 8080):
+        await asyncio.Future()  # run forever
 
-    try:
-        num_days = int(sys.argv[1])
-        if (num_days > 10) or (num_days < 1):
-            print("Number of days should not exceed 10 and should be > 0.")
-            return
-    except ValueError:
-        print("Invalid input. Please provide a valid number of days.")
-        return
-
-    dates = [(datetime.date.today() - datetime.timedelta(days=i)).strftime("%d.%m.%Y") for i in range(num_days)]
-    exchange_rate_fetcher = ExchangeRateFetcher()
-    exchange_rate_data = await exchange_rate_fetcher.get_exchange_rates(dates)
-    formatted_data = format_exchange_rate_data(exchange_rate_data)
-    #print(formatted_data)
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(formatted_data)
-
-if __name__ == "__main__":
-    import datetime
+if __name__ == '__main__':
     asyncio.run(main())
