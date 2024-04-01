@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 from abc import ABC, abstractclassmethod, abstractmethod
 import datetime
+import json
 
 class AbstractFetcher(ABC):
     @abstractclassmethod
@@ -65,7 +66,7 @@ class DefaultExchangeRatePrinter(ExchangeRatePrinter):
         return formatted_data
 
     def print_exchange_rate_data(self, formatted_data):
-        print(formatted_data)
+        print(json.dumps(formatted_data, indent=2,ensure_ascii=False))
 
     def check_currency_availability(self, data, currencies):
         available_currencies = set()
