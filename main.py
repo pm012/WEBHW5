@@ -6,7 +6,7 @@ import names
 import websockets
 from aiofile import AIOFile
 from datetime import datetime, timedelta
-from abc import ABC, abstractclassmethod
+from abc import ABC, abstractmethod
 
 FILENAME = 'exchange_logs.txt'
 
@@ -20,15 +20,15 @@ class FetchLogger():
 
 
 class AbstractFetcher(ABC):
-    @abstractclassmethod
+    @abstractmethod
     def fetch_exchange_rates_archive(self, days_back, currencies):
         pass
 
-    @abstractclassmethod
+    @abstractmethod
     def fetch_exchange_rates_current(self):
         pass
 
-    @abstractclassmethod
+    @abstractmethod
     def extract_rates(self, *args):
         pass
 

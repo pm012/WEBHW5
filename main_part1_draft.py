@@ -1,19 +1,19 @@
 import asyncio
 import aiohttp
-from abc import ABC, abstractclassmethod, abstractmethod
+from abc import ABC, abstractmethod
 import datetime
 import json
 
 class AbstractFetcher(ABC):
-    @abstractclassmethod
+    @abstractmethod
     def fetch_exchange_rates_archive(self, days_back, currencies):
         pass
 
-    @abstractclassmethod
+    @abstractmethod
     def fetch_exchange_rates_current(self):
         pass
 
-    @abstractclassmethod
+    @abstractmethod
     def extract_rates(self, *args):
         pass
 
