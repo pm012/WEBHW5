@@ -50,6 +50,7 @@ Additional Part
 - Extend added command exchange, to have the ability to get exchange rate in a chat for the last several days. For example, exchange 2
 - with the help of packages auifile and aiopath add logging to the file, when exchange was called in a chat
 
+Instructions:
 - Run main.py (whtout any parameters, can be done from IDE)
 - Open file index.html in browser (if user sends exchange + digit it should return exchange rates with the spcecified number of queries)
 - In case client from browser the other text oll other clients + sender should receive the text
